@@ -12,6 +12,7 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonNames
+import java.util.UUID
 
 object ProgressModeSerializer : KSerializer<ProgressMode> {
     override val descriptor: SerialDescriptor =
@@ -47,6 +48,29 @@ enum class ProgressMode(val wireValue: String, val displayName: String) {
 }
 
 /**
+ * Text alignment options for TextBlock.
+ */
+@Serializable
+enum class TextAlignment(val wireValue: String, val displayName: String) {
+    @SerialName("start")
+    START("start", "Left"),
+    @SerialName("center")
+    CENTER("center", "Center"),
+    @SerialName("end")
+    END("end", "Right");
+
+    companion object {
+        fun fromWireValue(value: String?): TextAlignment {
+            return when (value?.trim()?.lowercase()) {
+                "center" -> CENTER
+                "end", "right" -> END
+                else -> START
+            }
+        }
+    }
+}
+
+/**
  * Represents a customizable action button displayed in the notification's Action Block.
  */
 @Serializable
@@ -56,42 +80,284 @@ data class NotiAction(
 )
 
 /**
- * Domain model representing a modular Notification Template (either a curated preset or user-created).
+ * Polymorphic, reorderable block component for building dynamic notifications.
  */
 @Serializable
+sealed interface NotiBlock {
+    val blockId: String
+
+    @Serializable
+    @SerialName("header")
+    data class HeaderBlock(
+        override val blockId: String = "header",
+        val statusBadge: String = "LIVE",
+        val iconName: String = "notifications",
+        val accentColorHex: String = "#6750A4",
+        val useDynamicColor: Boolean = false
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("text")
+    data class TextBlock(
+        override val blockId: String = "text",
+        val title: String = "",
+        val body: String = "",
+        val subtext: String = "",
+        val alignment: TextAlignment = TextAlignment.START
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("metadata")
+    data class MetadataBlock(
+        override val blockId: String = UUID.randomUUID().toString().take(8),
+        val label: String = "",
+        val text: String = ""
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("divider")
+    data class DividerBlock(
+        override val blockId: String = UUID.randomUUID().toString().take(8)
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("progress")
+    data class ProgressBlock(
+        override val blockId: String = "progress",
+        val progressMode: ProgressMode = ProgressMode.MANUAL,
+        val progress: Int = 65,
+        val durationMinutes: Int = 45,
+        val autoDismiss: Boolean = false,
+        val finishText: String = "Completed"
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("actions")
+    data class ActionsBlock(
+        override val blockId: String = "actions",
+        val actions: List<NotiAction> = emptyList()
+    ) : NotiBlock
+
+    @Serializable
+    @SerialName("inline_reply")
+    data class InlineReplyBlock(
+        override val blockId: String = "reply",
+        val inputHint: String = "Type a quick note..."
+    ) : NotiBlock
+}
+
+/**
+ * Helper to convert legacy flat notification fields into an ordered list of blocks.
+ */
+fun legacyToBlocks(
+    showHeader: Boolean = true,
+    statusBadge: String = "LIVE",
+    iconName: String = "notifications",
+    accentColorHex: String = "#6750A4",
+    useDynamicColor: Boolean = false,
+    progressMode: ProgressMode = ProgressMode.NONE,
+    defaultProgress: Int = 65,
+    defaultDurationMinutes: Int = 45,
+    autoDismiss: Boolean = false,
+    finishText: String = "Completed",
+    showDetailBlock: Boolean = true,
+    defaultTitle: String = "NotiEngine Alert",
+    defaultBody: String = "Triggered via BroadcastIntent",
+    defaultMetadata: String = "",
+    showActionButtons: Boolean = false,
+    actions: List<NotiAction> = emptyList(),
+    showRemoteInput: Boolean = false,
+    inputHint: String = "Type a quick note..."
+): List<NotiBlock> {
+    val list = mutableListOf<NotiBlock>()
+    if (showHeader) {
+        list.add(
+            NotiBlock.HeaderBlock(
+                statusBadge = statusBadge,
+                iconName = iconName,
+                accentColorHex = accentColorHex,
+                useDynamicColor = useDynamicColor
+            )
+        )
+    }
+    list.add(
+        NotiBlock.TextBlock(
+            title = defaultTitle,
+            body = defaultBody
+        )
+    )
+    if (progressMode != ProgressMode.NONE) {
+        list.add(
+            NotiBlock.ProgressBlock(
+                progressMode = progressMode,
+                progress = defaultProgress,
+                durationMinutes = defaultDurationMinutes,
+                autoDismiss = autoDismiss,
+                finishText = finishText
+            )
+        )
+    }
+    if (showDetailBlock && defaultMetadata.isNotBlank()) {
+        list.add(
+            NotiBlock.MetadataBlock(
+                text = defaultMetadata
+            )
+        )
+    }
+    if (showActionButtons && actions.isNotEmpty()) {
+        list.add(
+            NotiBlock.ActionsBlock(
+                actions = actions
+            )
+        )
+    }
+    if (showRemoteInput) {
+        list.add(
+            NotiBlock.InlineReplyBlock(
+                inputHint = inputHint
+            )
+        )
+    }
+    return list
+}
+
+@Serializable
+private data class NotiTemplateSurrogate(
+    val id: Long = 0L,
+    val slug: String = "",
+    val name: String = "",
+    val description: String = "",
+    val isPreset: Boolean = false,
+    val blocks: List<NotiBlock>? = null,
+    val showHeader: Boolean? = null,
+    val statusBadge: String? = null,
+    val iconName: String? = null,
+    val accentColorHex: String? = null,
+    val useDynamicColor: Boolean? = null,
+    val progressMode: ProgressMode? = null,
+    val defaultProgress: Int? = null,
+    val defaultDurationMinutes: Int? = null,
+    val autoDismiss: Boolean? = null,
+    val finishText: String? = null,
+    val showDetailBlock: Boolean? = null,
+    val defaultTitle: String? = null,
+    val defaultBody: String? = null,
+    val defaultMetadata: String? = null,
+    val showActionButtons: Boolean? = null,
+    val actions: List<NotiAction>? = null,
+    val showRemoteInput: Boolean? = null,
+    val inputHint: String? = null
+)
+
+object NotiTemplateSerializer : KSerializer<NotiTemplate> {
+    override val descriptor: SerialDescriptor = NotiTemplateSurrogate.serializer().descriptor
+
+    override fun serialize(encoder: Encoder, value: NotiTemplate) {
+        val surrogate = NotiTemplateSurrogate(
+            id = value.id,
+            slug = value.slug,
+            name = value.name,
+            description = value.description,
+            isPreset = value.isPreset,
+            blocks = value.blocks,
+            showHeader = value.showHeader,
+            statusBadge = value.statusBadge,
+            iconName = value.iconName,
+            accentColorHex = value.accentColorHex,
+            useDynamicColor = value.useDynamicColor,
+            progressMode = value.progressMode,
+            defaultProgress = value.defaultProgress,
+            defaultDurationMinutes = value.defaultDurationMinutes,
+            autoDismiss = value.autoDismiss,
+            finishText = value.finishText,
+            showDetailBlock = value.showDetailBlock,
+            defaultTitle = value.defaultTitle,
+            defaultBody = value.defaultBody,
+            defaultMetadata = value.defaultMetadata,
+            showActionButtons = value.showActionButtons,
+            actions = value.actions,
+            showRemoteInput = value.showRemoteInput,
+            inputHint = value.inputHint
+        )
+        encoder.encodeSerializableValue(NotiTemplateSurrogate.serializer(), surrogate)
+    }
+
+    override fun deserialize(decoder: Decoder): NotiTemplate {
+        val surrogate = decoder.decodeSerializableValue(NotiTemplateSurrogate.serializer())
+        val resolvedBlocks = if (!surrogate.blocks.isNullOrEmpty()) {
+            surrogate.blocks
+        } else {
+            legacyToBlocks(
+                showHeader = surrogate.showHeader ?: true,
+                statusBadge = surrogate.statusBadge ?: "LIVE",
+                iconName = surrogate.iconName ?: "notifications",
+                accentColorHex = surrogate.accentColorHex ?: "#6750A4",
+                useDynamicColor = surrogate.useDynamicColor ?: false,
+                progressMode = surrogate.progressMode ?: ProgressMode.NONE,
+                defaultProgress = surrogate.defaultProgress ?: 65,
+                defaultDurationMinutes = surrogate.defaultDurationMinutes ?: 45,
+                autoDismiss = surrogate.autoDismiss ?: false,
+                finishText = surrogate.finishText ?: "Completed",
+                showDetailBlock = surrogate.showDetailBlock ?: true,
+                defaultTitle = surrogate.defaultTitle ?: surrogate.name.ifBlank { "NotiEngine Alert" },
+                defaultBody = surrogate.defaultBody ?: "",
+                defaultMetadata = surrogate.defaultMetadata ?: "",
+                showActionButtons = surrogate.showActionButtons ?: false,
+                actions = surrogate.actions ?: emptyList(),
+                showRemoteInput = surrogate.showRemoteInput ?: false,
+                inputHint = surrogate.inputHint ?: "Type a quick note..."
+            )
+        }
+        return NotiTemplate(
+            id = surrogate.id,
+            slug = surrogate.slug,
+            name = surrogate.name,
+            description = surrogate.description,
+            isPreset = surrogate.isPreset,
+            blocks = resolvedBlocks
+        )
+    }
+}
+
+/**
+ * Domain model representing a modular Notification Template (either a curated preset or user-created).
+ * Backed by an ordered list of [NotiBlock] canvas components with backward-compatible legacy getters.
+ */
+@Serializable(with = NotiTemplateSerializer::class)
 data class NotiTemplate(
     val id: Long = 0L,
     val slug: String,
     val name: String,
     val description: String,
     val isPreset: Boolean = false,
+    val blocks: List<NotiBlock> = emptyList()
+) {
+    // Backward compatibility helper properties
+    val showHeader: Boolean get() = blocks.any { it is NotiBlock.HeaderBlock }
+    val headerBlock: NotiBlock.HeaderBlock? get() = blocks.filterIsInstance<NotiBlock.HeaderBlock>().firstOrNull()
+    val textBlock: NotiBlock.TextBlock? get() = blocks.filterIsInstance<NotiBlock.TextBlock>().firstOrNull()
+    val progressBlock: NotiBlock.ProgressBlock? get() = blocks.filterIsInstance<NotiBlock.ProgressBlock>().firstOrNull()
+    val actionsBlock: NotiBlock.ActionsBlock? get() = blocks.filterIsInstance<NotiBlock.ActionsBlock>().firstOrNull()
+    val replyBlock: NotiBlock.InlineReplyBlock? get() = blocks.filterIsInstance<NotiBlock.InlineReplyBlock>().firstOrNull()
 
-    // Header Block
-    val showHeader: Boolean = true,
-    val statusBadge: String = "LIVE",
-    val iconName: String = "notifications",
-    val accentColorHex: String = "#6750A4",
-    val useDynamicColor: Boolean = false,
-
-    // Progress Block
-    val progressMode: ProgressMode = ProgressMode.NONE,
-    val defaultProgress: Int = 65,
-    val defaultDurationMinutes: Int = 45,
-    val autoDismiss: Boolean = false,
-    val finishText: String = "Completed",
-
-    // Detail Block
-    val showDetailBlock: Boolean = true,
-    val defaultTitle: String = "NotiEngine Alert",
-    val defaultBody: String = "Triggered via BroadcastIntent",
-    val defaultMetadata: String = "",
-
-    // Action & Input Block
-    val showActionButtons: Boolean = false,
-    val actions: List<NotiAction> = emptyList(),
-    val showRemoteInput: Boolean = false,
-    val inputHint: String = "Type a quick note..."
-)
+    val statusBadge: String get() = headerBlock?.statusBadge ?: "LIVE"
+    val iconName: String get() = headerBlock?.iconName ?: "notifications"
+    val accentColorHex: String get() = headerBlock?.accentColorHex ?: "#6750A4"
+    val useDynamicColor: Boolean get() = headerBlock?.useDynamicColor ?: false
+    val defaultTitle: String get() = textBlock?.title ?: name
+    val defaultBody: String get() = textBlock?.body ?: ""
+    val defaultMetadata: String get() = blocks.filterIsInstance<NotiBlock.MetadataBlock>().firstOrNull()?.text ?: ""
+    val progressMode: ProgressMode get() = progressBlock?.progressMode ?: ProgressMode.NONE
+    val defaultProgress: Int get() = progressBlock?.progress ?: 65
+    val defaultDurationMinutes: Int get() = progressBlock?.durationMinutes ?: 45
+    val autoDismiss: Boolean get() = progressBlock?.autoDismiss ?: false
+    val finishText: String get() = progressBlock?.finishText ?: "Completed"
+    val showActionButtons: Boolean get() = actionsBlock != null && (actionsBlock?.actions?.isNotEmpty() == true)
+    val actions: List<NotiAction> get() = actionsBlock?.actions ?: emptyList()
+    val showRemoteInput: Boolean get() = replyBlock != null
+    val inputHint: String get() = replyBlock?.inputHint ?: "Type a quick note..."
+    val showDetailBlock: Boolean get() = blocks.any { it is NotiBlock.MetadataBlock }
+}
 
 /**
  * Parsed incoming command from `NotiReceiver`.
@@ -141,7 +407,8 @@ sealed interface NotiCommand {
         val inputHint: String? = null,
         @SerialName("actions")
         @JsonNames("actionOverrides", "action_overrides")
-        val actionOverrides: List<NotiAction>? = null
+        val actionOverrides: List<NotiAction>? = null,
+        val blocks: List<NotiBlock>? = null
     ) : NotiCommand
 
     @Serializable
@@ -157,6 +424,7 @@ data class NotiPayload(
     val notificationTag: String,
     val notificationId: Int,
     val templateSlug: String,
+    val blocks: List<NotiBlock> = emptyList(),
     val showHeader: Boolean,
     val statusBadge: String,
     val iconName: String,
@@ -246,10 +514,86 @@ data class NotiPayload(
                 .trim()
                 .take(NotiContract.MAX_HINT_LENGTH)
 
+            // Resolve dynamic ordered blocks with runtime command overrides applied
+            val baseBlocks = command.blocks ?: if (template.blocks.isNotEmpty()) {
+                template.blocks
+            } else {
+                legacyToBlocks(
+                    showHeader = template.showHeader,
+                    statusBadge = safeBadge,
+                    iconName = template.iconName,
+                    accentColorHex = template.accentColorHex,
+                    useDynamicColor = template.useDynamicColor,
+                    progressMode = resolvedMode,
+                    defaultProgress = resolvedProgress,
+                    defaultDurationMinutes = resolvedDuration,
+                    autoDismiss = command.autoDismiss ?: template.autoDismiss,
+                    finishText = safeFinishText,
+                    showDetailBlock = template.showDetailBlock,
+                    defaultTitle = safeTitle,
+                    defaultBody = safeBody,
+                    defaultMetadata = safeMetadata,
+                    showActionButtons = resolvedShowActions,
+                    actions = resolvedActions,
+                    showRemoteInput = resolvedShowInput,
+                    inputHint = safeInputHint
+                )
+            }
+
+            val mappedBlocks = baseBlocks.map { block ->
+                when (block) {
+                    is NotiBlock.HeaderBlock -> {
+                        block.copy(
+                            statusBadge = command.statusBadge ?: block.statusBadge,
+                            accentColorHex = command.accentColorHex ?: block.accentColorHex
+                        )
+                    }
+                    is NotiBlock.TextBlock -> {
+                        block.copy(
+                            title = command.title ?: block.title.ifBlank { safeTitle },
+                            body = command.body ?: block.body.ifBlank { safeBody }
+                        )
+                    }
+                    is NotiBlock.MetadataBlock -> {
+                        block.copy(
+                            text = command.metadata ?: block.text.ifBlank { safeMetadata }
+                        )
+                    }
+                    is NotiBlock.DividerBlock -> block
+                    is NotiBlock.ProgressBlock -> {
+                        block.copy(
+                            progressMode = resolvedMode,
+                            progress = resolvedProgress,
+                            durationMinutes = resolvedDuration,
+                            autoDismiss = command.autoDismiss ?: block.autoDismiss,
+                            finishText = command.finishText ?: block.finishText
+                        )
+                    }
+                    is NotiBlock.ActionsBlock -> {
+                        block.copy(actions = resolvedActions)
+                    }
+                    is NotiBlock.InlineReplyBlock -> {
+                        block.copy(inputHint = safeInputHint)
+                    }
+                }
+            }.toMutableList()
+
+            // If command injected overrides for blocks not present in base template, append them
+            if (command.metadata != null && mappedBlocks.none { it is NotiBlock.MetadataBlock }) {
+                mappedBlocks.add(NotiBlock.MetadataBlock(text = safeMetadata))
+            }
+            if (command.actionOverrides != null && mappedBlocks.none { it is NotiBlock.ActionsBlock }) {
+                mappedBlocks.add(NotiBlock.ActionsBlock(actions = resolvedActions))
+            }
+            if (command.showInput == true && mappedBlocks.none { it is NotiBlock.InlineReplyBlock }) {
+                mappedBlocks.add(NotiBlock.InlineReplyBlock(inputHint = safeInputHint))
+            }
+
             return NotiPayload(
                 notificationTag = safeTag,
                 notificationId = notificationIdForTag(safeTag),
                 templateSlug = template.slug.trim().take(NotiContract.MAX_SLUG_LENGTH).ifEmpty { "custom" },
+                blocks = mappedBlocks,
                 showHeader = template.showHeader,
                 statusBadge = safeBadge,
                 iconName = template.iconName.trim().ifEmpty { "notifications" },

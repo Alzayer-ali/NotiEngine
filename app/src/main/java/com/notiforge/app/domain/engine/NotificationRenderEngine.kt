@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import androidx.annotation.DrawableRes
@@ -20,9 +21,12 @@ import androidx.core.content.ContextCompat
 import com.notiforge.app.MainActivity
 import com.notiforge.app.R
 import com.notiforge.app.domain.model.NotiAction
+import com.notiforge.app.domain.model.NotiBlock
 import com.notiforge.app.domain.model.NotiCommand
 import com.notiforge.app.domain.model.NotiPayload
 import com.notiforge.app.domain.model.ProgressMode
+import com.notiforge.app.domain.model.TextAlignment
+import com.notiforge.app.domain.model.legacyToBlocks
 import com.notiforge.app.ipc.NotiContract
 import com.notiforge.app.receiver.NotiActionReceiver
 import kotlinx.serialization.encodeToString
@@ -31,7 +35,8 @@ import kotlinx.serialization.json.Json
 /**
  * Core Notification Render Engine responsible for:
  * - Creating NotificationChannels
- * - Building Day/Night adaptive custom `RemoteViews` (collapsed + expanded)
+ * - Dynamically inflating and assembling modular RemoteViews block components into `noti_blocks_container`
+ * - Day/Night adaptive contrast tokens and Material You dynamic color tinting
  * - Wiring `FLAG_IMMUTABLE` PendingIntents for action buttons
  * - Wiring `FLAG_MUTABLE` explicit PendingIntents for inline `RemoteInput`
  * - Managing active payload state so partial `UPDATE` commands and `RemoteInput` replies preserve layout state
@@ -92,7 +97,7 @@ object NotificationRenderEngine {
     }
 
     /**
-     * Builds a complete [Notification] using custom collapsed and expanded [RemoteViews]
+     * Builds a complete [Notification] using dynamic custom collapsed and expanded [RemoteViews]
      * styled with adaptive Day/Night contrast, swipe-to-dismiss `deleteIntent`, and optional inline [RemoteInput].
      */
     fun buildNotification(
@@ -126,8 +131,6 @@ object NotificationRenderEngine {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // DeleteIntent ensures swiping away an active timer or notification immediately stops
-        // TimerForegroundService and cleans up state instead of resurrecting on the next tick.
         val dismissIntent = Intent(appContext, NotiActionReceiver::class.java).apply {
             action = NotiContract.ACTION_INTERNAL_NOTIFICATION_DISMISSED
             setPackage(appContext.packageName)
@@ -166,8 +169,9 @@ object NotificationRenderEngine {
                 else NotificationCompat.PRIORITY_DEFAULT
             )
 
-        // Attach inline RemoteInput if enabled
-        if (payload.showRemoteInput) {
+        // Attach inline RemoteInput if enabled or present in blocks
+        val hasReplyBlock = payload.showRemoteInput || payload.blocks.any { it is NotiBlock.InlineReplyBlock }
+        if (hasReplyBlock) {
             val replyLabel = payload.inputHint.ifBlank { appContext.getString(R.string.noti_reply_action_label) }
             val remoteInput = RemoteInput.Builder(NotiContract.REMOTE_INPUT_RESULT_KEY)
                 .setLabel(replyLabel)
@@ -179,7 +183,6 @@ object NotificationRenderEngine {
                 putExtra(NotiContract.Extras.ID, payload.notificationTag)
             }
 
-            // RemoteInput requires FLAG_MUTABLE on Android 12+ (API 31+) so the system can attach user input
             val mutableFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             } else {
@@ -301,6 +304,10 @@ object NotificationRenderEngine {
         return rv
     }
 
+    /**
+     * Iterates through the payload's ordered blocks list and injects each sub-view dynamically
+     * into the parent container `@+id/noti_blocks_container` via `addView()`.
+     */
     private fun buildExpandedRemoteViews(
         context: Context,
         payload: NotiPayload,
@@ -308,104 +315,192 @@ object NotificationRenderEngine {
         accentColorInt: Int
     ): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.noti_expanded)
+        rv.removeAllViews(R.id.noti_blocks_container)
 
-        // 1. Header Block (strictly uses system-safe text colors from XML; only small icon uses contrast-safe tint)
-        val showProgressText = payload.progressMode != ProgressMode.NONE && payload.progressStatusText.isNotBlank()
-        if (payload.showHeader || showProgressText) {
-            rv.setViewVisibility(R.id.noti_header_container, View.VISIBLE)
-            rv.setImageViewResource(R.id.noti_header_icon, iconRes)
-            rv.setInt(R.id.noti_header_icon, "setColorFilter", accentColorInt)
-
-            if (payload.showHeader && payload.statusBadge.isNotBlank()) {
-                rv.setViewVisibility(R.id.noti_status_badge, View.VISIBLE)
-                rv.setTextViewText(
-                    R.id.noti_status_badge,
-                    if (payload.isTimerCompleted) "DONE" else payload.statusBadge
-                )
-            } else {
-                rv.setViewVisibility(R.id.noti_status_badge, View.GONE)
-            }
-
-            if (showProgressText) {
-                rv.setViewVisibility(R.id.noti_progress_text, View.VISIBLE)
-                rv.setTextViewText(R.id.noti_progress_text, payload.progressStatusText)
-            } else {
-                rv.setViewVisibility(R.id.noti_progress_text, View.GONE)
-            }
+        val blocksToRender = if (payload.blocks.isNotEmpty()) {
+            payload.blocks
         } else {
-            rv.setViewVisibility(R.id.noti_header_container, View.GONE)
+            legacyToBlocks(
+                showHeader = payload.showHeader,
+                statusBadge = payload.statusBadge,
+                iconName = payload.iconName,
+                accentColorHex = payload.accentColorHex,
+                useDynamicColor = payload.useDynamicColor,
+                progressMode = payload.progressMode,
+                defaultProgress = payload.progress,
+                defaultDurationMinutes = payload.durationMinutes,
+                autoDismiss = payload.autoDismiss,
+                finishText = payload.finishText,
+                showDetailBlock = payload.showDetailBlock,
+                defaultTitle = payload.title,
+                defaultBody = payload.body,
+                defaultMetadata = payload.metadata,
+                showActionButtons = payload.showActionButtons,
+                actions = payload.actions,
+                showRemoteInput = payload.showRemoteInput,
+                inputHint = payload.inputHint
+            )
         }
 
-        // 2. Title & Body
-        rv.setTextViewText(R.id.noti_title, payload.title)
-        val displayBody = if (payload.isTimerCompleted && payload.finishText.isNotBlank()) {
-            payload.finishText
-        } else {
-            payload.body
-        }
-        rv.setTextViewText(R.id.noti_body, displayBody)
-
-        // 3. Progress Block
-        if (payload.progressMode != ProgressMode.NONE) {
-            rv.setViewVisibility(R.id.noti_progress_container, View.VISIBLE)
-            rv.setProgressBar(R.id.noti_progress_bar, 100, payload.progress.coerceIn(0, 100), false)
-        } else {
-            rv.setViewVisibility(R.id.noti_progress_container, View.GONE)
+        val progressReadout = when (payload.progressMode) {
+            ProgressMode.NONE -> ""
+            ProgressMode.MANUAL -> "${payload.progress}%"
+            ProgressMode.AUTO_TIMER -> payload.progressStatusText.ifBlank { "${payload.durationMinutes}m left" }
         }
 
-        // 4. Detail / Metadata & RemoteInput Reply Status Block
-        val hasMetadata = payload.showDetailBlock && payload.metadata.isNotBlank()
-        val hasReplyStatus = !payload.replyStatusText.isNullOrBlank()
-        if (hasMetadata || hasReplyStatus) {
-            rv.setViewVisibility(R.id.noti_detail_container, View.VISIBLE)
-            if (hasMetadata) {
-                rv.setViewVisibility(R.id.noti_metadata, View.VISIBLE)
-                rv.setTextViewText(R.id.noti_metadata, payload.metadata)
-            } else {
-                rv.setViewVisibility(R.id.noti_metadata, View.GONE)
-            }
+        for (block in blocksToRender) {
+            when (block) {
+                is NotiBlock.HeaderBlock -> {
+                    val headerRv = RemoteViews(context.packageName, R.layout.block_header)
+                    val blockIconRes = resolveSmallIconRes(block.iconName)
+                    val blockAccentColor = resolveAccentColor(context, block.accentColorHex, block.useDynamicColor)
+                    headerRv.setImageViewResource(R.id.noti_header_icon, blockIconRes)
+                    headerRv.setInt(R.id.noti_header_icon, "setColorFilter", blockAccentColor)
 
-            if (hasReplyStatus) {
-                rv.setViewVisibility(R.id.noti_reply_status, View.VISIBLE)
-                rv.setTextViewText(R.id.noti_reply_status, payload.replyStatusText)
-            } else {
-                rv.setViewVisibility(R.id.noti_reply_status, View.GONE)
-            }
-        } else {
-            rv.setViewVisibility(R.id.noti_detail_container, View.GONE)
-        }
-
-        // 5. Action Buttons Block (uses FLAG_IMMUTABLE PendingIntents)
-        val buttonIds = listOf(R.id.noti_btn_1, R.id.noti_btn_2, R.id.noti_btn_3)
-        val actionsToShow = if (payload.showActionButtons) payload.actions.take(3) else emptyList()
-
-        if (actionsToShow.isNotEmpty()) {
-            rv.setViewVisibility(R.id.noti_actions_container, View.VISIBLE)
-            buttonIds.forEachIndexed { index, viewId ->
-                val action: NotiAction? = actionsToShow.getOrNull(index)
-                if (action != null) {
-                    rv.setViewVisibility(viewId, View.VISIBLE)
-                    rv.setTextViewText(viewId, action.label)
-
-                    val clickIntent = Intent(context, NotiActionReceiver::class.java).apply {
-                        this.action = NotiContract.ACTION_INTERNAL_BUTTON_CLICK
-                        setPackage(context.packageName)
-                        putExtra(NotiContract.Extras.ID, payload.notificationTag)
-                        putExtra(NotiContract.Extras.ACTION_ID, action.id)
+                    val badgeText = if (payload.isTimerCompleted) "DONE" else block.statusBadge
+                    if (badgeText.isNotBlank()) {
+                        headerRv.setViewVisibility(R.id.noti_status_badge, View.VISIBLE)
+                        headerRv.setTextViewText(R.id.noti_status_badge, badgeText)
+                    } else {
+                        headerRv.setViewVisibility(R.id.noti_status_badge, View.GONE)
                     }
-                    val clickPendingIntent = PendingIntent.getBroadcast(
-                        context,
-                        uniqueRequestCode(payload.notificationTag, "btn_${index}_${action.id}"),
-                        clickIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+
+                    if (payload.progressMode != ProgressMode.NONE && progressReadout.isNotBlank()) {
+                        headerRv.setViewVisibility(R.id.noti_progress_text, View.VISIBLE)
+                        headerRv.setTextViewText(R.id.noti_progress_text, progressReadout)
+                    } else {
+                        headerRv.setViewVisibility(R.id.noti_progress_text, View.GONE)
+                    }
+
+                    rv.addView(R.id.noti_blocks_container, headerRv)
+                }
+
+                is NotiBlock.TextBlock -> {
+                    val textRv = RemoteViews(context.packageName, R.layout.block_text)
+                    val displayTitle = block.title.ifBlank { payload.title }
+                    val displayBody = if (payload.isTimerCompleted && payload.finishText.isNotBlank()) {
+                        payload.finishText
+                    } else {
+                        block.body.ifBlank { payload.body }
+                    }
+
+                    textRv.setTextViewText(R.id.noti_title, displayTitle)
+                    textRv.setTextViewText(R.id.noti_body, displayBody)
+
+                    if (block.subtext.isNotBlank()) {
+                        textRv.setViewVisibility(R.id.noti_subtext, View.VISIBLE)
+                        textRv.setTextViewText(R.id.noti_subtext, block.subtext)
+                    } else {
+                        textRv.setViewVisibility(R.id.noti_subtext, View.GONE)
+                    }
+
+                    val gravityInt = when (block.alignment) {
+                        TextAlignment.CENTER -> Gravity.CENTER_HORIZONTAL
+                        TextAlignment.END -> Gravity.END
+                        TextAlignment.START -> Gravity.START
+                    }
+                    textRv.setInt(R.id.noti_title, "setGravity", gravityInt)
+                    textRv.setInt(R.id.noti_body, "setGravity", gravityInt)
+                    textRv.setInt(R.id.noti_subtext, "setGravity", gravityInt)
+
+                    rv.addView(R.id.noti_blocks_container, textRv)
+                }
+
+                is NotiBlock.DividerBlock -> {
+                    val dividerRv = RemoteViews(context.packageName, R.layout.block_divider)
+                    rv.addView(R.id.noti_blocks_container, dividerRv)
+                }
+
+                is NotiBlock.MetadataBlock -> {
+                    val metaText = block.text.ifBlank { payload.metadata }
+                    val hasReplyStatus = !payload.replyStatusText.isNullOrBlank()
+                    if (metaText.isNotBlank() || hasReplyStatus) {
+                        val metaRv = RemoteViews(context.packageName, R.layout.block_metadata)
+                        val formatted = if (block.label.isNotBlank() && !metaText.startsWith(block.label)) {
+                            "${block.label}: $metaText"
+                        } else {
+                            metaText
+                        }
+
+                        if (formatted.isNotBlank()) {
+                            metaRv.setViewVisibility(R.id.noti_metadata, View.VISIBLE)
+                            metaRv.setTextViewText(R.id.noti_metadata, formatted)
+                        } else {
+                            metaRv.setViewVisibility(R.id.noti_metadata, View.GONE)
+                        }
+
+                        if (hasReplyStatus) {
+                            metaRv.setViewVisibility(R.id.noti_reply_status, View.VISIBLE)
+                            metaRv.setTextViewText(R.id.noti_reply_status, payload.replyStatusText)
+                        } else {
+                            metaRv.setViewVisibility(R.id.noti_reply_status, View.GONE)
+                        }
+
+                        rv.addView(R.id.noti_blocks_container, metaRv)
+                    }
+                }
+
+                is NotiBlock.ProgressBlock -> {
+                    if (payload.progressMode != ProgressMode.NONE || block.progressMode != ProgressMode.NONE) {
+                        val progressRv = RemoteViews(context.packageName, R.layout.block_progress)
+                        progressRv.setProgressBar(
+                            R.id.noti_progress_bar,
+                            100,
+                            payload.progress.coerceIn(0, 100),
+                            false
+                        )
+                        rv.addView(R.id.noti_blocks_container, progressRv)
+                    }
+                }
+
+                is NotiBlock.ActionsBlock -> {
+                    val actionsToShow = (payload.actions.ifEmpty { block.actions }).take(3)
+                    if (actionsToShow.isNotEmpty()) {
+                        val actionsRv = RemoteViews(context.packageName, R.layout.block_actions)
+                        val buttonIds = listOf(R.id.noti_btn_1, R.id.noti_btn_2, R.id.noti_btn_3)
+                        buttonIds.forEachIndexed { index, viewId ->
+                            val action: NotiAction? = actionsToShow.getOrNull(index)
+                            if (action != null) {
+                                actionsRv.setViewVisibility(viewId, View.VISIBLE)
+                                actionsRv.setTextViewText(viewId, action.label)
+
+                                val clickIntent = Intent(context, NotiActionReceiver::class.java).apply {
+                                    this.action = NotiContract.ACTION_INTERNAL_BUTTON_CLICK
+                                    setPackage(context.packageName)
+                                    putExtra(NotiContract.Extras.ID, payload.notificationTag)
+                                    putExtra(NotiContract.Extras.ACTION_ID, action.id)
+                                }
+                                val clickPendingIntent = PendingIntent.getBroadcast(
+                                    context,
+                                    uniqueRequestCode(payload.notificationTag, "btn_${index}_${action.id}"),
+                                    clickIntent,
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                                )
+                                actionsRv.setOnClickPendingIntent(viewId, clickPendingIntent)
+                            } else {
+                                actionsRv.setViewVisibility(viewId, View.GONE)
+                            }
+                        }
+                        rv.addView(R.id.noti_blocks_container, actionsRv)
+                    }
+                }
+
+                is NotiBlock.InlineReplyBlock -> {
+                    val replyRv = RemoteViews(context.packageName, R.layout.block_inline_reply)
+                    val hint = payload.inputHint.ifBlank { block.inputHint }
+                    replyRv.setTextViewText(
+                        R.id.noti_reply_hint,
+                        hint.ifBlank { context.getString(R.string.noti_reply_action_label) }
                     )
-                    rv.setOnClickPendingIntent(viewId, clickPendingIntent)
-                } else {
-                    rv.setViewVisibility(viewId, View.GONE)
+                    if (!payload.replyStatusText.isNullOrBlank()) {
+                        replyRv.setViewVisibility(R.id.noti_reply_status_text, View.VISIBLE)
+                        replyRv.setTextViewText(R.id.noti_reply_status_text, payload.replyStatusText)
+                    } else {
+                        replyRv.setViewVisibility(R.id.noti_reply_status_text, View.GONE)
+                    }
+                    rv.addView(R.id.noti_blocks_container, replyRv)
                 }
             }
-        } else {
-            rv.setViewVisibility(R.id.noti_actions_container, View.GONE)
         }
 
         return rv
@@ -446,7 +541,6 @@ object NotificationRenderEngine {
             return ContextCompat.getColor(context, R.color.noti_progress_fill)
         }
 
-        // Ensure high contrast against dark or light system notification backgrounds
         val luminance = androidx.core.graphics.ColorUtils.calculateLuminance(rawColor)
         return when {
             isNightMode && luminance < 0.35 -> {
@@ -528,38 +622,103 @@ object NotificationRenderEngine {
             )
         }
 
+        val updatedTitle = (command.title ?: existing.title)
+            .trim()
+            .take(NotiContract.MAX_TITLE_LENGTH)
+            .ifEmpty { "NotiEngine Alert" }
+
+        val updatedBody = (command.body ?: existing.body)
+            .trim()
+            .take(NotiContract.MAX_BODY_LENGTH)
+
+        val updatedMetadata = (command.metadata ?: existing.metadata)
+            .trim()
+            .take(NotiContract.MAX_METADATA_LENGTH)
+
+        val updatedBadge = (command.statusBadge ?: existing.statusBadge)
+            .trim()
+            .take(NotiContract.MAX_BADGE_LENGTH)
+
+        val updatedAccent = (command.accentColorHex ?: existing.accentColorHex)
+            .trim()
+            .take(NotiContract.MAX_COLOR_HEX_LENGTH)
+            .ifEmpty { "#4F46E5" }
+
+        val updatedFinishText = (command.finishText ?: existing.finishText)
+            .trim()
+            .take(NotiContract.MAX_BODY_LENGTH)
+            .ifEmpty { "Completed" }
+
+        val updatedHint = (command.inputHint ?: existing.inputHint)
+            .trim()
+            .take(NotiContract.MAX_HINT_LENGTH)
+
+        // Merge block representations
+        val baseBlocks = command.blocks ?: existing.blocks
+        val updatedBlocks = baseBlocks.map { block ->
+            when (block) {
+                is NotiBlock.HeaderBlock -> {
+                    block.copy(
+                        statusBadge = command.statusBadge ?: block.statusBadge,
+                        accentColorHex = command.accentColorHex ?: block.accentColorHex
+                    )
+                }
+                is NotiBlock.TextBlock -> {
+                    block.copy(
+                        title = command.title ?: block.title.ifBlank { updatedTitle },
+                        body = command.body ?: block.body.ifBlank { updatedBody }
+                    )
+                }
+                is NotiBlock.MetadataBlock -> {
+                    block.copy(
+                        text = command.metadata ?: block.text.ifBlank { updatedMetadata }
+                    )
+                }
+                is NotiBlock.DividerBlock -> block
+                is NotiBlock.ProgressBlock -> {
+                    block.copy(
+                        progressMode = updatedMode,
+                        progress = updatedProgress,
+                        durationMinutes = updatedDuration,
+                        autoDismiss = command.autoDismiss ?: block.autoDismiss,
+                        finishText = command.finishText ?: block.finishText
+                    )
+                }
+                is NotiBlock.ActionsBlock -> {
+                    block.copy(actions = resolvedActions)
+                }
+                is NotiBlock.InlineReplyBlock -> {
+                    block.copy(inputHint = updatedHint)
+                }
+            }
+        }.toMutableList()
+
+        if (command.metadata != null && updatedBlocks.none { it is NotiBlock.MetadataBlock }) {
+            updatedBlocks.add(NotiBlock.MetadataBlock(text = updatedMetadata))
+        }
+        if (command.actionOverrides != null && updatedBlocks.none { it is NotiBlock.ActionsBlock }) {
+            updatedBlocks.add(NotiBlock.ActionsBlock(actions = resolvedActions))
+        }
+        if (command.showInput == true && updatedBlocks.none { it is NotiBlock.InlineReplyBlock }) {
+            updatedBlocks.add(NotiBlock.InlineReplyBlock(inputHint = updatedHint))
+        }
+
         return existing.copy(
-            title = (command.title ?: existing.title)
-                .trim()
-                .take(NotiContract.MAX_TITLE_LENGTH)
-                .ifEmpty { "NotiEngine Alert" },
-            body = (command.body ?: existing.body)
-                .trim()
-                .take(NotiContract.MAX_BODY_LENGTH),
-            metadata = (command.metadata ?: existing.metadata)
-                .trim()
-                .take(NotiContract.MAX_METADATA_LENGTH),
-            statusBadge = (command.statusBadge ?: existing.statusBadge)
-                .trim()
-                .take(NotiContract.MAX_BADGE_LENGTH),
-            accentColorHex = (command.accentColorHex ?: existing.accentColorHex)
-                .trim()
-                .take(NotiContract.MAX_COLOR_HEX_LENGTH)
-                .ifEmpty { "#4F46E5" },
+            blocks = updatedBlocks,
+            title = updatedTitle,
+            body = updatedBody,
+            metadata = updatedMetadata,
+            statusBadge = updatedBadge,
+            accentColorHex = updatedAccent,
             progressMode = updatedMode,
             progress = updatedProgress,
             progressStatusText = updatedStatusText,
             durationMinutes = updatedDuration,
             startTimeEpochMillis = updatedStartTime,
             autoDismiss = command.autoDismiss ?: existing.autoDismiss,
-            finishText = (command.finishText ?: existing.finishText)
-                .trim()
-                .take(NotiContract.MAX_BODY_LENGTH)
-                .ifEmpty { "Completed" },
+            finishText = updatedFinishText,
             showRemoteInput = command.showInput ?: existing.showRemoteInput,
-            inputHint = (command.inputHint ?: existing.inputHint)
-                .trim()
-                .take(NotiContract.MAX_HINT_LENGTH),
+            inputHint = updatedHint,
             actions = resolvedActions,
             showActionButtons = if (command.actionOverrides != null) resolvedActions.isNotEmpty() else existing.showActionButtons,
             isTimerCompleted = updatedTimerCompleted,

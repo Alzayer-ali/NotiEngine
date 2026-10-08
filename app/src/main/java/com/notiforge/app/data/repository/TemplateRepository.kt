@@ -33,21 +33,22 @@ class TemplateRepository(
         val entities = PresetCatalog.defaultPresets.map { TemplateEntity.fromDomain(it, json) }
         templateDao.insertAllIgnore(entities)
 
-        // Ensure any legacy typo ("Quick Noe" -> "Quick Note") in seeded or existing records is repaired
+        // Ensure any legacy typo ("Quick Noe" -> "Quick Note") is repaired
+        // and upgrade existing records lacking populated blocksJson
         val existing = templateDao.getAllTemplates()
         for (entity in existing) {
             val fixedName = entity.name.replace(Regex("Quick Noe", RegexOption.IGNORE_CASE), "Quick Note")
                 .let { if (entity.slug == "quick_note" && entity.isPreset) "Quick Note" else it }
             val fixedDesc = entity.description.replace(Regex("Quick Noe", RegexOption.IGNORE_CASE), "Quick Note")
             val fixedTitle = entity.defaultTitle.replace(Regex("Quick Noe", RegexOption.IGNORE_CASE), "Quick Note")
-            if (fixedName != entity.name || fixedDesc != entity.description || fixedTitle != entity.defaultTitle) {
-                templateDao.update(
-                    entity.copy(
-                        name = fixedName,
-                        description = fixedDesc,
-                        defaultTitle = fixedTitle
-                    )
-                )
+            val needsBlocksUpgrade = entity.blocksJson.isBlank()
+            if (fixedName != entity.name || fixedDesc != entity.description || fixedTitle != entity.defaultTitle || needsBlocksUpgrade) {
+                val domain = entity.copy(
+                    name = fixedName,
+                    description = fixedDesc,
+                    defaultTitle = fixedTitle
+                ).toDomain(json)
+                templateDao.update(TemplateEntity.fromDomain(domain, json))
             }
         }
     }

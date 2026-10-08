@@ -72,27 +72,32 @@ class NotiViewModel(application: Application) : AndroidViewModel(application) {
             name = "Custom Notification",
             description = "Personalized modular notification template for MacroDroid.",
             isPreset = false,
-            showHeader = true,
-            statusBadge = "ACTIVE",
-            iconName = "notifications",
-            accentColorHex = "#4F46E5",
-            useDynamicColor = false,
-            progressMode = ProgressMode.MANUAL,
-            defaultProgress = 50,
-            defaultDurationMinutes = 25,
-            autoDismiss = false,
-            finishText = "Completed",
-            showDetailBlock = true,
-            defaultTitle = "Custom Automation Task",
-            defaultBody = "Triggered dynamically from MacroDroid via BroadcastIntent.",
-            defaultMetadata = "Workspace • Ready",
-            showActionButtons = true,
-            actions = listOf(
-                com.notiforge.app.domain.model.NotiAction("btn_primary", "Run Action"),
-                com.notiforge.app.domain.model.NotiAction("btn_dismiss", "Dismiss")
-            ),
-            showRemoteInput = false,
-            inputHint = "Enter reply..."
+            blocks = listOf(
+                com.notiforge.app.domain.model.NotiBlock.HeaderBlock(
+                    statusBadge = "ACTIVE",
+                    iconName = "notifications",
+                    accentColorHex = "#4F46E5"
+                ),
+                com.notiforge.app.domain.model.NotiBlock.TextBlock(
+                    title = "Custom Automation Task",
+                    body = "Triggered dynamically from MacroDroid via BroadcastIntent."
+                ),
+                com.notiforge.app.domain.model.NotiBlock.DividerBlock(),
+                com.notiforge.app.domain.model.NotiBlock.MetadataBlock(
+                    text = "Workspace • Ready"
+                ),
+                com.notiforge.app.domain.model.NotiBlock.ProgressBlock(
+                    progressMode = ProgressMode.MANUAL,
+                    progress = 50,
+                    durationMinutes = 25
+                ),
+                com.notiforge.app.domain.model.NotiBlock.ActionsBlock(
+                    actions = listOf(
+                        com.notiforge.app.domain.model.NotiAction("btn_primary", "Run Action"),
+                        com.notiforge.app.domain.model.NotiAction("btn_dismiss", "Dismiss")
+                    )
+                )
+            )
         )
         editingTemplateFlow.value = blankTemplate
     }

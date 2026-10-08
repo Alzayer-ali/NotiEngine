@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -45,15 +46,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.notiforge.app.domain.model.NotiBlock
 import com.notiforge.app.domain.model.NotiTemplate
 import com.notiforge.app.domain.model.ProgressMode
+import com.notiforge.app.domain.model.TextAlignment
 
 /**
  * Real-time WYSIWYG Compose preview card that visually mirrors the custom `RemoteViews`
- * (`noti_expanded.xml` and `noti_collapsed.xml`) rendered by NotiEngine.
+ * (`noti_expanded.xml` and `noti_collapsed.xml`) rendered dynamically by NotiEngine.
  */
 @Composable
 fun LiveNotificationPreviewCard(
@@ -217,164 +221,228 @@ fun LiveNotificationPreviewCard(
                         }
                     }
                 } else {
-                    // Mirrors res/layout/noti_expanded.xml
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // 1. Header Block
-                        val hasProgressText = template.progressMode != ProgressMode.NONE && progressReadout.isNotBlank()
-                        if (template.showHeader || hasProgressText) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = iconVector,
-                                    contentDescription = null,
-                                    tint = accentColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
+                    // Mirrors res/layout/noti_expanded.xml with dynamically ordered blocks
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        template.blocks.forEach { block ->
+                            when (block) {
+                                is NotiBlock.HeaderBlock -> {
+                                    val blockAccent = parseComposeColor(
+                                        hex = block.accentColorHex,
+                                        useDynamic = block.useDynamicColor,
+                                        fallback = accentColor
+                                    )
+                                    val blockIcon = resolvePreviewIcon(block.iconName)
+                                    val hasProgress = template.progressMode != ProgressMode.NONE && progressReadout.isNotBlank()
 
-                                if (template.showHeader && template.statusBadge.isNotBlank()) {
-                                    StatusBadgePill(text = template.statusBadge)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = blockIcon,
+                                            contentDescription = null,
+                                            tint = blockAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        if (block.statusBadge.isNotBlank()) {
+                                            StatusBadgePill(text = block.statusBadge)
+                                        }
+
+                                        Spacer(modifier = Modifier.weight(1f))
+
+                                        if (hasProgress) {
+                                            Text(
+                                                text = progressReadout,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
                                 }
 
-                                Spacer(modifier = Modifier.weight(1f))
+                                is NotiBlock.TextBlock -> {
+                                    val textAlign = when (block.alignment) {
+                                        TextAlignment.CENTER -> TextAlign.Center
+                                        TextAlignment.END -> TextAlign.End
+                                        TextAlignment.START -> TextAlign.Start
+                                    }
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = when (block.alignment) {
+                                            TextAlignment.CENTER -> Alignment.CenterHorizontally
+                                            TextAlignment.END -> Alignment.End
+                                            TextAlignment.START -> Alignment.Start
+                                        }
+                                    ) {
+                                        if (block.title.isNotBlank()) {
+                                            Text(
+                                                text = block.title,
+                                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                textAlign = textAlign,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                        if (block.body.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = block.body,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = textAlign,
+                                                maxLines = 4,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                        if (block.subtext.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = block.subtext,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                                textAlign = textAlign,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
+                                }
 
-                                if (hasProgressText) {
-                                    Text(
-                                        text = progressReadout,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                is NotiBlock.DividerBlock -> {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
                                     )
                                 }
-                            }
-                        }
 
-                        // 2. Headline & Body
-                        Text(
-                            text = template.defaultTitle.ifBlank { "Notification Title" },
-                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                                is NotiBlock.MetadataBlock -> {
+                                    val fullText = if (block.label.isNotBlank() && !block.text.startsWith(block.label)) {
+                                        "${block.label}: ${block.text}"
+                                    } else {
+                                        block.text
+                                    }
+                                    if (fullText.isNotBlank()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = fullText,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
 
-                        Spacer(modifier = Modifier.height(3.dp))
-
-                        Text(
-                            text = template.defaultBody.ifBlank { "Notification description and body content." },
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        // 3. Progress Block
-                        if (template.progressMode != ProgressMode.NONE) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            RemoteViewsProgressBar(
-                                fraction = progressFraction,
-                                accentColor = accentColor,
-                                heightDp = 8
-                            )
-                        }
-
-                        // 4. Detail / Metadata Block
-                        if (template.showDetailBlock && template.defaultMetadata.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = template.defaultMetadata,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        // 5. Action Buttons Block (Up to 3 Custom Pill Buttons)
-                        val visibleActions = if (template.showActionButtons) template.actions.take(3) else emptyList()
-                        if (visibleActions.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                visibleActions.forEach { action ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(34.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f))
-                                            .clickable(enabled = onActionClickPreview != null) {
-                                                onActionClickPreview?.invoke(action.id)
-                                            }
-                                            .padding(horizontal = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = action.label,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                is NotiBlock.ProgressBlock -> {
+                                    if (block.progressMode != ProgressMode.NONE) {
+                                        val blockFraction = when (block.progressMode) {
+                                            ProgressMode.NONE -> 0f
+                                            ProgressMode.MANUAL -> block.progress.coerceIn(0, 100) / 100f
+                                            ProgressMode.AUTO_TIMER -> 0.38f
+                                        }
+                                        RemoteViewsProgressBar(
+                                            fraction = blockFraction,
+                                            accentColor = accentColor,
+                                            heightDp = 8
                                         )
                                     }
                                 }
-                            }
-                        }
 
-                        // 6. Native Inline RemoteInput Bar Preview
-                        if (template.showRemoteInput) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(50))
-                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                    .border(
-                                        width = 1.dp,
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                                        shape = RoundedCornerShape(50)
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.EditNote,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = template.inputHint.ifBlank { "Reply / Capture..." },
-                                    fontSize = 12.sp,
-                                    fontStyle = FontStyle.Italic,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Send RemoteInput",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(15.dp)
-                                )
+                                is NotiBlock.ActionsBlock -> {
+                                    val visibleActions = block.actions.take(3)
+                                    if (visibleActions.isNotEmpty()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            visibleActions.forEach { action ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(34.dp)
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f))
+                                                        .clickable(enabled = onActionClickPreview != null) {
+                                                            onActionClickPreview?.invoke(action.id)
+                                                        }
+                                                        .padding(horizontal = 8.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = action.label,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                is NotiBlock.InlineReplyBlock -> {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                                            .border(
+                                                width = 1.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                                                shape = RoundedCornerShape(50)
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.EditNote,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = block.inputHint.ifBlank { "Reply / Capture..." },
+                                            fontSize = 12.sp,
+                                            fontStyle = FontStyle.Italic,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = "Send RemoteInput",
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

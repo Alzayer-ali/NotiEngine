@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive Night Mode System-Safe Notification Surface & Typography Palette -->
+    <color name="noti_card_bg">@android:color/transparent</color>
+    <color name="noti_surface_container">#14FFFFFF</color>
+    <color name="noti_text_primary">#FFFFFFFF</color>
+    <color name="noti_text_secondary">#B3FFFFFF</color>
+    <color name="noti_text_muted">#80FFFFFF</color>
+    <color name="noti_badge_bg">#1FFFFFFF</color>
+    <color name="noti_badge_text">#FFFFFFFF</color>
+    <color name="noti_progress_track">#29FFFFFF</color>
+    <color name="noti_progress_fill">#FFA5B4FC</color>
+    <color name="noti_button_bg">#1FFFFFFF</color>
+    <color name="noti_button_text">#FFFFFFFF</color>
+    <color name="noti_divider">#29FFFFFF</color>
+    <color name="ic_launcher_background">#FF1E1B2E</color>
+</resources>

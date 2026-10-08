@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NotiEngine</string>
+    <string name="channel_default_name">Rich Automation Notifications</string>
+    <string name="channel_default_desc">Custom styled notifications triggered from MacroDroid and automation tools.</string>
+    <string name="channel_timer_name">Autonomous Countdown Timers</string>
+    <string name="channel_timer_desc">Live progress bar and countdown notifications managed by NotiEngine.</string>
+    <string name="channel_alert_name">High Priority Automation Alerts</string>
+    <string name="channel_alert_desc">Urgent alerts and interactive control decks.</string>
+    <string name="noti_icon_content_desc">Notification status icon</string>
+    <string name="noti_reply_action_label">Reply / Capture</string>
+</resources>

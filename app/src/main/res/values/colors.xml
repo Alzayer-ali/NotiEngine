@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive Day Mode System-Safe Notification Surface & Typography Palette -->
+    <color name="noti_card_bg">@android:color/transparent</color>
+    <color name="noti_surface_container">#12000000</color>
+    <color name="noti_text_primary">#DE000000</color>
+    <color name="noti_text_secondary">#99000000</color>
+    <color name="noti_text_muted">#61000000</color>
+    <color name="noti_badge_bg">#14000000</color>
+    <color name="noti_badge_text">#DE000000</color>
+    <color name="noti_progress_track">#1F000000</color>
+    <color name="noti_progress_fill">#FF4F46E5</color>
+    <color name="noti_button_bg">#14000000</color>
+    <color name="noti_button_text">#DE000000</color>
+    <color name="noti_divider">#1F000000</color>
+    <color name="ic_launcher_background">#FF1E1B2E</color>
+</resources>
